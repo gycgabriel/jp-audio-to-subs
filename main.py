@@ -160,7 +160,7 @@ def main():
     parser.add_argument(
         "--cpu-threads",
         type=int,
-        default=4,
+        default=6,
         help="CPU threads per faster-whisper instance",
     )
     parser.add_argument("--in-place", action="store_true")
