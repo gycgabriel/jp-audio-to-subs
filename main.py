@@ -58,19 +58,37 @@ def process_video_inplace(video_path: Path, args):
             cpu_threads=args.cpu_threads,
         )
 
-        segments, _ = model.transcribe(
+        # 2. Run faster-whisper and grab info (which contains total audio duration)
+        segments, info = model.transcribe(
             str(temp_wav_path),
             language=args.language,
             chunk_length=15,  # Optimized for Kotoba-Whisper
             condition_on_previous_text=False,  # Prevents sentence repetition loops
         )
 
-        # Build clean SRT file
+        total_duration = info.duration
+        print(f"[TRANSCRIBING] {video_path.name} (Duration: {total_duration:.1f}s)")
+
+        # Build clean SRT file while printing a minimal incremental log
         with open(generated_srt, "w", encoding="utf-8") as f:
             for idx, seg in enumerate(segments, start=1):
                 start_str = format_timestamp(seg.start)
                 end_str = format_timestamp(seg.end)
                 f.write(f"{idx}\n{start_str} --> {end_str}\n{seg.text.strip()}\n\n")
+
+                # Minimal log update matching current processed timestamp to total duration
+                percent = (
+                    min(100, int((seg.end / total_duration) * 100))
+                    if total_duration > 0
+                    else 0
+                )
+                print(
+                    f"[{video_path.name}] Progress: {percent}% ({start_str.split(',')[0]} / {int(total_duration)}s)",
+                    end="\r",
+                    flush=True,
+                )
+
+        print()  # Clean newline after tracking finishes
 
         if not generated_srt.exists():
             raise FileNotFoundError(
