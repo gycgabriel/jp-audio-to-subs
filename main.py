@@ -1,4 +1,7 @@
 import argparse
+import os
+import signal
+import sys
 import subprocess
 import uuid
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -6,6 +9,42 @@ from pathlib import Path
 from faster_whisper import WhisperModel
 
 DEFAULT_MODEL_PATH = "kotoba-tech/kotoba-whisper-v2.0-faster"
+
+# Track active temp files and global executor for emergency hard-stops
+ACTIVE_TEMP_FILES = set()
+GLOBAL_EXECUTOR = None
+
+
+def cleanup_handler(signum=None, frame=None):
+    """Instantly kills worker processes and wipes out any remaining temp files."""
+    print("\n[ABORT] Interrupt received. Halting workers and cleaning up...")
+
+    # 1. Force-terminate all active worker processes immediately
+    global GLOBAL_EXECUTOR
+    if GLOBAL_EXECUTOR is not None:
+        try:
+            for p in GLOBAL_EXECUTOR._processes.values():
+                p.terminate()
+        except Exception:
+            pass
+
+    # 2. Clean up tracked temporary files
+    for file_path in list(ACTIVE_TEMP_FILES):
+        try:
+            p = Path(file_path)
+            if p.exists():
+                p.unlink()
+                print(f"Removed temp file: {p.name}")
+        except Exception:
+            pass
+
+    sys.exit(1)
+
+
+# Register signals for Ctrl+C and terminal termination
+signal.signal(signal.SIGINT, cleanup_handler)
+if hasattr(signal, "SIGTERM"):
+    signal.signal(signal.SIGTERM, cleanup_handler)
 
 
 def format_timestamp(seconds: float) -> str:
@@ -29,6 +68,9 @@ def process_video_inplace(video_path: Path, args):
     temp_wav_path = video_path.with_name(f"{video_path.stem}_{unique_id}.temp.wav")
     temp_mp4_path = video_path.with_name(f"{video_path.stem}_{unique_id}.temp.mp4")
     generated_srt = video_path.with_name(f"{video_path.stem}_{unique_id}.srt")
+
+    # Track files globally for emergency cleanup
+    ACTIVE_TEMP_FILES.update([temp_wav_path, temp_mp4_path, generated_srt])
 
     print(f"[START] {video_path.name}")
 
@@ -88,7 +130,7 @@ def process_video_inplace(video_path: Path, args):
                     flush=True,
                 )
 
-        print()  # Clean newline after tracking finishes
+        print()
 
         if not generated_srt.exists():
             raise FileNotFoundError(
@@ -96,6 +138,7 @@ def process_video_inplace(video_path: Path, args):
             )
 
         generated_srt.replace(srt_path)
+        ACTIVE_TEMP_FILES.discard(generated_srt)
 
         # 3. Optional In-Place Embedding
         if args.in_place:
@@ -116,6 +159,7 @@ def process_video_inplace(video_path: Path, args):
             # fmt:on
 
             temp_mp4_path.replace(video_path)
+            ACTIVE_TEMP_FILES.discard(temp_mp4_path)
 
             if not args.keep_srt:
                 srt_path.unlink(missing_ok=True)
@@ -129,15 +173,14 @@ def process_video_inplace(video_path: Path, args):
         if args.in_place and srt_path.exists() and not args.keep_srt:
             srt_path.unlink(missing_ok=True)
     finally:
-        if temp_wav_path.exists():
-            temp_wav_path.unlink(missing_ok=True)
-        if temp_mp4_path.exists():
-            temp_mp4_path.unlink(missing_ok=True)
-        if generated_srt.exists():
-            generated_srt.unlink(missing_ok=True)
+        for p in [temp_wav_path, temp_mp4_path, generated_srt]:
+            if p.exists():
+                p.unlink(missing_ok=True)
+            ACTIVE_TEMP_FILES.discard(p)
 
 
 def main():
+    global GLOBAL_EXECUTOR
     parser = argparse.ArgumentParser(
         description="Parallel Batch Subtitle Generator for Intel/CPU Execution"
     )
@@ -174,12 +217,17 @@ def main():
         f"Found {len(mp4_files)} total MP4 files. Launching with {args.workers} worker(s)..."
     )
 
-    with ProcessPoolExecutor(max_workers=args.workers) as executor:
-        futures = [
-            executor.submit(process_video_inplace, mp4, args) for mp4 in mp4_files
-        ]
-        for future in as_completed(futures):
-            future.result()
+    try:
+        with ProcessPoolExecutor(max_workers=args.workers) as executor:
+            GLOBAL_EXECUTOR = executor
+            futures = {
+                executor.submit(process_video_inplace, mp4, args): mp4
+                for mp4 in mp4_files
+            }
+            for future in as_completed(futures):
+                future.result()
+    except KeyboardInterrupt:
+        cleanup_handler()
 
     print("\nAll batch processing complete!")
 
