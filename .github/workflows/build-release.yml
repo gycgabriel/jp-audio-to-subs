@@ -1,0 +1,84 @@
+name: Build and Release Executables
+
+on:
+  push:
+    tags:
+      - 'v*' # Triggers on tags like v1.0.0, v0.1.2, etc.
+
+permissions:
+  contents: write # Required to create a release and upload assets
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows
+            executable_name: myapp.exe
+            archive_name: myapp-windows-x64.zip
+          - os: ubuntu-latest
+            target: linux
+            executable_name: myapp
+            archive_name: myapp-linux-x64.tar.gz
+          - os: macos-latest
+            target: macos
+            executable_name: myapp
+            archive_name: myapp-macos-x64.tar.gz
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onefile --name myapp main.py
+        # Note: Replace 'main.py' with the path to your entrypoint script.
+        # If you need assets included, use --add-data "source;dest" (Windows) or --add-data "source:dest" (Unix)
+
+      - name: Archive Windows Artifact
+        if: matrix.target == 'windows'
+        run: |
+          Compress-Archive -Path dist/myapp.exe -DestinationPath ${{ matrix.archive_name }}
+
+      - name: Archive Unix Artifact (Linux/macOS)
+        if: matrix.target != 'windows'
+        run: |
+          tar -czvf ${{ matrix.archive_name }} -C dist myapp
+
+      - name: Upload Artifact to Workflow (Debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifact-${{ matrix.target }}
+          path: ${{ matrix.archive_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true
