@@ -19,16 +19,16 @@ jobs:
         include:
           - os: windows-latest
             target: windows
-            executable_name: myapp.exe
-            archive_name: myapp-windows-x64.zip
+            executable_name: jp-audio-to-sub.exe
+            archive_name: jp-audio-to-sub-windows-x64.zip
           - os: ubuntu-latest
             target: linux
-            executable_name: myapp
-            archive_name: myapp-linux-x64.tar.gz
+            executable_name: jp-audio-to-sub
+            archive_name: jp-audio-to-sub-linux-x64.tar.gz
           - os: macos-latest
             target: macos
-            executable_name: myapp
-            archive_name: myapp-macos-x64.tar.gz
+            executable_name: jp-audio-to-sub
+            archive_name: jp-audio-to-sub-macos-x64.tar.gz
 
     steps:
       - name: Checkout Repository
@@ -47,19 +47,19 @@ jobs:
 
       - name: Build with PyInstaller
         run: |
-          pyinstaller --onefile --name myapp main.py
+          pyinstaller --onefile --name jp-audio-to-sub main.py
         # Note: Replace 'main.py' with the path to your entrypoint script.
         # If you need assets included, use --add-data "source;dest" (Windows) or --add-data "source:dest" (Unix)
 
       - name: Archive Windows Artifact
         if: matrix.target == 'windows'
         run: |
-          Compress-Archive -Path dist/myapp.exe -DestinationPath ${{ matrix.archive_name }}
+          Compress-Archive -Path dist/jp-audio-to-sub.exe -DestinationPath ${{ matrix.archive_name }}
 
       - name: Archive Unix Artifact (Linux/macOS)
         if: matrix.target != 'windows'
         run: |
-          tar -czvf ${{ matrix.archive_name }} -C dist myapp
+          tar -czvf ${{ matrix.archive_name }} -C dist jp-audio-to-sub
 
       - name: Upload Artifact to Workflow (Debugging)
         uses: actions/upload-artifact@v4
